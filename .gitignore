@@ -1,0 +1,69 @@
+/.venv/
+# Build artifacts
+bin/
+obj/
+
+# Angular project (initialize on target machine)
+angular-graph-ui/
+
+# Object files
+*.o
+*.obj
+
+# Debug symbols
+*.dSYM/
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Compiled dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled static libraries
+*.a
+*.lib
+
+# Core dumps
+core
+core.*
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Generated graph files
+website_graph.json
+workflow_graph.json
+my_graph.json
+my_graph.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Flask
+instance/
+.webassets-cache
+graph_web_ui.log
