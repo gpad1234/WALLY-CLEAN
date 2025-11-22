@@ -148,7 +148,12 @@ $(STRUCT_MEMORY_DEMO_BIN): $(STRUCT_MEMORY_DEMO_OBJ) | $(BIN_DIR)
 	@echo "✓ Struct memory demo executable created: $@"
 
 # Build everything including test and animated demo
-build-all: prepare $(DRIVER_BIN) $(TEST_BIN) $(ANIMATED_DEMO_BIN) $(DOUBLY_DRIVER_BIN) $(CIRCULAR_DRIVER_BIN) $(ARRAY_POINTER_DEMO_BIN) $(STRUCT_MEMORY_DEMO_BIN)
+build-all: prepare $(DRIVER_BIN) $(TEST_BIN) $(ANIMATED_DEMO_BIN) $(DOUBLY_DRIVER_BIN) $(CIRCULAR_DRIVER_BIN) $(ARRAY_POINTER_DEMO_BIN) $(STRUCT_MEMORY_DEMO_BIN) $(SIMPLE_DB_LIB)
+
+# Build only the simple database shared library
+libsimpledb.dylib: $(SIMPLE_DB_LIB)
+	@echo "✓ Simple database shared library built: $(SIMPLE_DB_LIB)"
+
 	@echo "✓ All executables built successfully!"
 
 # Run the driver
@@ -219,6 +224,7 @@ help:
 	@echo "make build-all    - Build all executables"
 	@echo "make run          - Run the interactive driver"
 	@echo "make run-test     - Run the test program"
+	@echo "make libsimpledb.dylib - Build the simple database shared library"
 	@echo "make run-demo     - Run animated demo"
 	@echo "make run-doubly   - Run doubly linked list driver"
 	@echo "make run-circular - Run circular linked list driver"
