@@ -1,12 +1,3 @@
-
-
-# --- NLP Query Endpoint (OpenAI integration) ---
-#!/usr/bin/env python3
-"""
-Graph Database Web UI
-Provides interactive query interface with visualization and actions
-"""
-
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 from graph_db import GraphDB
@@ -18,38 +9,9 @@ import openai
 import requests
 from dotenv import load_dotenv
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('graph_web_ui.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-
-
-
 app = Flask(__name__)
 
-def resolve_node_id(name_or_id):
-    """
-    Resolve a node name (case-insensitive) or ID to the actual node ID if it exists.
-    Returns the node ID if found, else None.
-    """
-    if not graph:
-        return None
-    # Try exact match first
-    if graph.node_exists(name_or_id):
-        return name_or_id
-    # Try case-insensitive match
-    for node_id in graph.get_all_nodes():
-        if node_id.lower() == name_or_id.lower():
-            return node_id
-    return None
-
+# --- NLP Query Endpoint (OpenAI and Claude integration) ---
 @app.route('/api/nlp_query', methods=['POST'])
 def nlp_query():
     """Process a natural language query using OpenAI and map to graph actions"""
@@ -172,6 +134,140 @@ def nlp_query():
             return jsonify({'action': action, 'explanation': explanation})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# --- NLP Query Endpoint (OpenAI integration) ---
+#!/usr/bin/env python3
+"""
+Graph Database Web UI
+Provides interactive query interface with visualization and actions
+"""
+
+from flask import Flask, render_template, request, jsonify
+from flask_cors import CORS
+from graph_db import GraphDB
+import json
+import os
+import logging
+import traceback
+import openai
+import requests
+from dotenv import load_dotenv
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('graph_web_ui.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+
+
+app = Flask(__name__)
+
+def resolve_node_id(name_or_id):
+    """
+    Resolve a node name (case-insensitive) or ID to the actual node ID if it exists.
+    Returns the node ID if found, else None.
+    """
+    if not graph:
+        return None
+    # Try exact match first
+    if graph.node_exists(name_or_id):
+        return name_or_id
+    # Try case-insensitive match
+    for node_id in graph.get_all_nodes():
+        if node_id.lower() == name_or_id.lower():
+            return node_id
+    return None
+
+@app.route('/api/graph/visualization', methods=['GET'])
+def get_visualization_data():
+    """Get graph data formatted for visualization"""
+    try:
+        logger.info("GET /api/graph/visualization")
+        if not graph:
+            logger.error("Graph not initialized")
+            return jsonify({'error': 'Graph not initialized'}), 400
+        # Get all node IDs and build full node objects
+        node_ids = graph.get_all_nodes()
+        logger.debug(f"Found {len(node_ids)} node IDs: {node_ids}")
+        nodes = []
+        for node_id in node_ids:
+            try:
+                node_data = graph.get_node(node_id)
+                logger.debug(f"Node {node_id}: {node_data}")
+                if node_data:
+                    nodes.append(node_data)
+            except Exception as node_exc:
+                logger.error(f"Error getting node {node_id}: {node_exc}")
+                logger.error(traceback.format_exc())
+        # Get all edges as tuples and convert to dicts
+        try:
+            edge_tuples = graph.get_all_edges()
+        except Exception as edge_exc:
+            logger.error(f"Error getting edges: {edge_exc}")
+            logger.error(traceback.format_exc())
+            edge_tuples = []
+        edges = []
+        for edge in edge_tuples:
+            try:
+                edge_dict = {
+                    'from': edge[0],
+                    'to': edge[1]
+                }
+                if len(edge) > 2 and edge[2] is not None:
+                    edge_dict['weight'] = edge[2]
+                edges.append(edge_dict)
+            except Exception as edge_dict_exc:
+                logger.error(f"Error processing edge {edge}: {edge_dict_exc}")
+                logger.error(traceback.format_exc())
+        # Format for visualization libraries (e.g., D3.js, vis.js)
+        vis_nodes = []
+        for node in nodes:
+            try:
+                vis_nodes.append({
+                    'id': node['id'],
+                    'label': node['id'],
+                    'title': json.dumps(node.get('data', {}), indent=2),
+                    'data': node.get('data', {})
+                })
+            except Exception as vis_node_exc:
+                logger.error(f"Error formatting node for visualization: {vis_node_exc}")
+                logger.error(traceback.format_exc())
+        vis_edges = []
+        for edge in edges:
+            try:
+                edge_data = {
+                    'from': edge['from'],
+                    'to': edge['to'],
+                    'arrows': 'to' if graph.directed else ''
+                }
+                if graph.weighted and 'weight' in edge:
+                    edge_data['label'] = str(edge['weight'])
+                    edge_data['value'] = edge['weight']
+                vis_edges.append(edge_data)
+            except Exception as vis_edge_exc:
+                logger.error(f"Error formatting edge for visualization: {vis_edge_exc}")
+                logger.error(traceback.format_exc())
+        logger.info(f"Visualization data: {len(vis_nodes)} nodes, {len(vis_edges)} edges")
+        return jsonify({
+            'nodes': vis_nodes,
+            'edges': vis_edges,
+            'options': {
+                'directed': graph.directed,
+                'weighted': graph.weighted
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error in get_visualization_data: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 app.config['DEBUG'] = False
 
 # Enable CORS for React frontend and test pages
@@ -635,72 +731,6 @@ def import_json():
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/graph/visualization', methods=['GET'])
-def get_visualization_data():
-    """Get graph data formatted for visualization"""
-    try:
-        logger.info("GET /api/graph/visualization")
-        if not graph:
-            logger.error("Graph not initialized")
-            return jsonify({'error': 'Graph not initialized'}), 400
-        
-        # Get all node IDs and build full node objects
-        node_ids = graph.get_all_nodes()
-        logger.debug(f"Found {len(node_ids)} node IDs: {node_ids}")
-        nodes = []
-        for node_id in node_ids:
-            node_data = graph.get_node(node_id)
-            logger.debug(f"Node {node_id}: {node_data}")
-            if node_data:
-                nodes.append(node_data)
-        
-        # Get all edges as tuples and convert to dicts
-        edge_tuples = graph.get_all_edges()
-        edges = []
-        for edge in edge_tuples:
-            edge_dict = {
-                'from': edge[0],
-                'to': edge[1]
-            }
-            if len(edge) > 2 and edge[2] is not None:
-                edge_dict['weight'] = edge[2]
-            edges.append(edge_dict)
-        
-        # Format for visualization libraries (e.g., D3.js, vis.js)
-        vis_nodes = []
-        for node in nodes:
-            vis_nodes.append({
-                'id': node['id'],
-                'label': node['id'],
-                'title': json.dumps(node.get('data', {}), indent=2),
-                'data': node.get('data', {})
-            })
-        
-        vis_edges = []
-        for edge in edges:
-            edge_data = {
-                'from': edge['from'],
-                'to': edge['to'],
-                'arrows': 'to' if graph.directed else ''
-            }
-            if graph.weighted and 'weight' in edge:
-                edge_data['label'] = str(edge['weight'])
-                edge_data['value'] = edge['weight']
-            
-            vis_edges.append(edge_data)
-        
-        logger.info(f"Visualization data: {len(vis_nodes)} nodes, {len(vis_edges)} edges")
-        return jsonify({
-            'nodes': vis_nodes,
-            'edges': vis_edges,
-            'options': {
-                'directed': graph.directed,
-                'weighted': graph.weighted
-            }
-        })
-    except Exception as e:
-        logger.error(f"Error in get_visualization_data: {str(e)}")
-        logger.error(traceback.format_exc())
-        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 @app.route('/api/graph/reset', methods=['POST'])
 def reset_graph():
@@ -948,13 +978,17 @@ def handle_exception(e):
     return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 if __name__ == '__main__':
+    import time
     try:
+        print("[DEBUG] Script started and __name__ == '__main__'")
         # Load environment variables from .env if present
         load_dotenv()
 
         # Initialize with sample data
         logger.info("Initializing sample graph...")
+        print("[DEBUG] Calling initialize_sample_graph()...")
         initialize_sample_graph()
+        print("[DEBUG] Sample graph initialized.")
 
         # Create templates directory if it doesn't exist
         os.makedirs('templates', exist_ok=True)
@@ -971,10 +1005,14 @@ if __name__ == '__main__':
         print("=" * 60)
 
         logger.info("Starting Flask server on http://0.0.0.0:5001")
+        print("[DEBUG] About to call app.run()...")
         # Set debug=False to prevent auto-restart on file changes
         # Set debug=True for development with auto-reload
         app.run(debug=False, host='0.0.0.0', port=5001)
+        print("[DEBUG] app.run() returned (should not happen unless server stopped)")
+        time.sleep(60)
     except Exception as e:
+        print(f"[DEBUG] Exception occurred: {e}")
         logger.error(f"Failed to start server: {str(e)}")
         logger.error(traceback.format_exc())
         raise

@@ -4,8 +4,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -g -O2
 LDFLAGS = -lm
 
-# Detect OS
-UNAME_S := $(shell uname -s)
+
 
 # Directories
 SRC_DIR = .
@@ -52,11 +51,14 @@ ARRAY_POINTER_DEMO_BIN = $(BIN_DIR)/array_pointer_demo
 STRUCT_MEMORY_DEMO_BIN = $(BIN_DIR)/struct_memory_demo
 SIMPLE_DB_TEST_BIN = $(BIN_DIR)/simple_db_test
 
-# Shared libraries
-ifeq ($(UNAME_S),Darwin)
-    SIMPLE_DB_LIB = $(BIN_DIR)/libsimpledb.dylib
+
+# Shared libraries (platform-specific)
+ifeq ($(OS),Windows_NT)
+	SIMPLE_DB_LIB = $(BIN_DIR)/simpledb.dll
+	DLLFLAGS = -shared
 else
-    SIMPLE_DB_LIB = $(BIN_DIR)/libsimpledb.so
+	SIMPLE_DB_LIB = $(BIN_DIR)/libsimpledb.so
+	DLLFLAGS = -shared -fPIC
 endif
 
 # Phony targets
@@ -66,7 +68,12 @@ endif
 all: prepare $(DRIVER_BIN)
 
 prepare:
+ifeq ($(OS),Windows_NT)
+	@if not exist $(BIN_DIR) mkdir $(BIN_DIR)
+	@if not exist $(OBJ_DIR) mkdir $(OBJ_DIR)
+else
 	@mkdir -p $(BIN_DIR) $(OBJ_DIR)
+endif
 
 # Compile library object file
 $(LIBRARY_OBJ): $(LIBRARY_SRC) $(HEADERS) | $(OBJ_DIR)
@@ -200,9 +207,10 @@ run-db-test: $(SIMPLE_DB_TEST_BIN)
 	@echo "Starting simple database test..."
 	@$(SIMPLE_DB_TEST_BIN)
 
-# Build simple database shared library
+
+# Build simple database shared library (DLL/.so/.dylib)
 $(SIMPLE_DB_LIB): $(SIMPLE_DB_SRC) | $(BIN_DIR)
-	$(CC) -shared -fPIC $(CFLAGS) $< -o $@
+	$(CC) $(DLLFLAGS) $(CFLAGS) $< -o $@
 	@echo "✓ Simple database library created: $@"
 
 # Build simple database standalone test
