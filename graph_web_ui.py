@@ -15,6 +15,7 @@ import os
 import logging
 import traceback
 import openai
+import requests
 from dotenv import load_dotenv
 
 # Configure logging
@@ -33,7 +34,22 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# --- NLP Query Endpoint (OpenAI integration) ---
+def resolve_node_id(name_or_id):
+    """
+    Resolve a node name (case-insensitive) or ID to the actual node ID if it exists.
+    Returns the node ID if found, else None.
+    """
+    if not graph:
+        return None
+    # Try exact match first
+    if graph.node_exists(name_or_id):
+        return name_or_id
+    # Try case-insensitive match
+    for node_id in graph.get_all_nodes():
+        if node_id.lower() == name_or_id.lower():
+            return node_id
+    return None
+
 @app.route('/api/nlp_query', methods=['POST'])
 def nlp_query():
     """Process a natural language query using OpenAI and map to graph actions"""
@@ -45,31 +61,60 @@ def nlp_query():
 
         # Compose a prompt for OpenAI to map query to graph actions
         prompt = f"""
-You are an assistant for a graph database. Map the user's natural language query to one of these actions:
-- 'stats': Return the number of nodes and edges.
-- 'visualization': Return the full graph data (nodes and edges).
-- 'list_nodes': List all node IDs.
-- 'list_edges': List all edges as (from, to, name, weight).
-- 'custom': For anything else, explain what you would do.
+    You are an assistant for a graph database. Map the user's natural language query to one of these actions:
+    - "stats": Return the number of nodes and edges.
+    - "visualization": Return the full graph data (nodes and edges).
+    - "list_nodes": List all node IDs.
+    - "list_edges": List all edges as (from, to, name, weight).
+    - "shortest_path": For shortest path queries, extract the start and target node names or IDs from the query and return action "shortest_path".
+    - "custom": For anything else, explain what you would do.
 
-User query: {query}
-Respond with a JSON object: {{'action': <action>, 'explanation': <short explanation>}}
-"""
-        openai.api_key = os.getenv('OPENAI_API_KEY')
-        if not openai.api_key:
-            return jsonify({'error': 'OpenAI API key not set in OPENAI_API_KEY env var'}), 500
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "system", "content": "You are a helpful assistant."},
-                      {"role": "user", "content": prompt}],
-            max_tokens=150,
-            temperature=0
-        )
-        content = response['choices'][0]['message']['content']
+    User query: {query}
+    Respond ONLY with a single line JSON object using double quotes for all keys and string values, e.g. {{"action": "stats", "explanation": "..."}}
+    """
+        # Try OpenAI first
+        openai_api_key = os.getenv('OPENAI_API_KEY')
         try:
-            result = json.loads(content.replace("'", '"'))
-        except Exception:
-            return jsonify({'error': 'Failed to parse OpenAI response', 'raw': content}), 500
+            if not openai_api_key:
+                raise Exception('OpenAI API key not set in OPENAI_API_KEY env var')
+            openai.api_key = openai_api_key
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "system", "content": "You are a helpful assistant."},
+                          {"role": "user", "content": prompt}],
+                max_tokens=150,
+                temperature=0
+            )
+            content = response['choices'][0]['message']['content']
+            try:
+                result = json.loads(content)
+            except Exception as parse_exc:
+                return jsonify({'error': f'OpenAI response could not be parsed as JSON', 'raw': content, 'exception': str(parse_exc)}), 500
+        except Exception as openai_exc:
+            # If OpenAI fails, try Claude as backup
+            anthropic_api_key = os.getenv('CLAUDE_CODE_KEY') or os.getenv('ANTHROPIC_API_KEY')
+            if not anthropic_api_key:
+                return jsonify({'error': f'OpenAI failed: {str(openai_exc)}. Claude API key not set in CLAUDE_CODE_KEY or ANTHROPIC_API_KEY env var'}), 500
+            headers = {
+                "x-api-key": anthropic_api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            }
+            data = {
+                "model": "claude-3-opus-20240229",
+                "max_tokens": 256,
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ]
+            }
+            r = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data)
+            if not r.ok:
+                return jsonify({'error': f'OpenAI failed: {str(openai_exc)}. Claude API error: {r.status_code}', 'raw': r.text}), 500
+            try:
+                content = r.json()["content"][0]["text"]
+                result = json.loads(content.replace("'", '"'))
+            except Exception:
+                return jsonify({'error': f'OpenAI failed: {str(openai_exc)}. Failed to parse Claude response', 'raw': r.text}), 500
         action = result.get('action')
         explanation = result.get('explanation', '')
         # Map action to backend
@@ -95,6 +140,34 @@ Respond with a JSON object: {{'action': <action>, 'explanation': <short explanat
                 }
                 edges.append(edge_dict)
             return jsonify({'action': action, 'explanation': explanation, 'edges': edges})
+        elif action == 'shortest_path':
+            # Try to extract start and target node names/IDs from the query or explanation
+            import re
+            match = re.search(r'from (?:node )?(\w+) to (?:node )?(\w+)', query, re.IGNORECASE)
+            if match:
+                start_raw, target_raw = match.group(1), match.group(2)
+            else:
+                # Try to find two words or numbers in the query
+                tokens = re.findall(r'\b\w+\b', query)
+                if len(tokens) >= 2:
+                    start_raw, target_raw = tokens[0], tokens[1]
+                else:
+                    return jsonify({'action': action, 'explanation': explanation, 'error': 'Could not extract start and target nodes from your query. Please specify, e.g., "Find the shortest path from Alice to Frank."'}), 400
+            # Resolve names/IDs to actual node IDs
+            start = resolve_node_id(start_raw)
+            target = resolve_node_id(target_raw)
+            if not start or not target:
+                return jsonify({'action': action, 'explanation': explanation, 'error': f'Could not find node(s): {start_raw if not start else ""} {target_raw if not target else ""}'}), 400
+            # Call the backend shortest_path endpoint
+            try:
+                sp_resp = app.test_client().post('/api/graph/shortest_path', json={'start': start, 'target': target})
+                if sp_resp.status_code == 200:
+                    sp_data = sp_resp.get_json()
+                    return jsonify({'action': action, 'explanation': explanation, 'start': start, 'target': target, 'path': sp_data.get('path'), 'cost': sp_data.get('cost'), 'algorithm': sp_data.get('algorithm')})
+                else:
+                    return jsonify({'action': action, 'explanation': explanation, 'error': sp_resp.get_json().get('error', 'Failed to compute shortest path')}), 400
+            except Exception as e:
+                return jsonify({'action': action, 'explanation': explanation, 'error': str(e)}), 500
         else:
             return jsonify({'action': action, 'explanation': explanation})
     except Exception as e:
